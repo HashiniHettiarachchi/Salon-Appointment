@@ -1,0 +1,140 @@
+version: '3.8'
+
+services:
+  # MongoDB Service
+  mongodb-v3:
+    image: mongo:7.0
+    container_name: salon-mongo-v3
+    restart: unless-stopped
+    ports:
+      - "27021:27017"  # Different port (V3)
+    volumes:
+      - salon_mongo_v3:/data/db
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: Admin123456
+    networks:
+      - salon-net-v3
+
+  # RabbitMQ Service
+  rabbitmq-v3:
+    image: rabbitmq:3.13-management-alpine
+    container_name: salon-rabbitmq-v3
+    restart: unless-stopped
+    ports:
+      - "5675:5672"    # Different port (V3)
+      - "15675:15672"  # Different port (V3)
+    environment:
+      RABBITMQ_DEFAULT_USER: admin
+      RABBITMQ_DEFAULT_PASS: Admin123456
+    volumes:
+      - salon_rabbitmq_v3:/var/lib/rabbitmq
+    networks:
+      - salon-net-v3
+    healthcheck:
+      test: rabbitmq-diagnostics -q ping
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Backend Service
+  backend-v3:
+    build:
+      context: ./salon-booking-backend
+      dockerfile: Dockerfile
+    image: salon-backend-v3:latest
+    container_name: salon-backend-v3
+    restart: unless-stopped
+    ports:
+      - "5004:5000"  # Different port (V3)
+    depends_on:
+      rabbitmq-v3:
+        condition: service_healthy
+    environment:
+      # MongoDB Atlas (Cloud)
+      - MONGO_URI=mongodb+srv://Hashini:Admin123456@salon-cluster.pmpdda2.mongodb.net/salonBooking?retryWrites=true&w=majority
+      
+      # RabbitMQ Connection (use V3 container name)
+      - RABBITMQ_URL=amqp://admin:Admin123456@rabbitmq-v3:5672
+      
+      # JWT Secret
+      - JWT_SECRET=your_super_secret_key_change_this_in_production
+      
+      # Email Configuration
+      - EMAIL_USER=hehashini@gmail.com
+      - EMAIL_PASSWORD=xzmdvkdwchtbyfik
+      - EMAIL_FROM=noreply@salonbooking.com
+      
+      # Frontend URL
+      - FRONTEND_URL=http://localhost:3004
+      
+      # Port
+      - PORT=5000
+      
+      # Node Environment
+      - NODE_ENV=development
+    volumes:
+      - ./salon-booking-backend:/app
+      - /app/node_modules
+    networks:
+      - salon-net-v3
+
+  # Consumers Service (Background Workers)
+  consumers-v3:
+    build:
+      context: ./salon-booking-backend
+      dockerfile: Dockerfile
+    image: salon-consumers-v3:latest
+    container_name: salon-consumers-v3
+    restart: unless-stopped
+    command: npm run consumers
+    depends_on:
+      rabbitmq-v3:
+        condition: service_healthy
+    environment:
+      # Same as backend
+      - MONGO_URI=mongodb+srv://Hashini:Admin123456@salon-cluster.pmpdda2.mongodb.net/salonBooking?retryWrites=true&w=majority
+      - RABBITMQ_URL=amqp://admin:Admin123456@rabbitmq-v3:5672
+      - EMAIL_USER=hehashini@gmail.com
+      - EMAIL_PASSWORD=xzmdvkdwchtbyfik
+      - EMAIL_FROM=noreply@salonbooking.com
+      - NODE_ENV=development
+    volumes:
+      - ./salon-booking-backend:/app
+      - /app/node_modules
+    networks:
+      - salon-net-v3
+
+  # Frontend Service
+  frontend-v3:
+    build:
+      context: ./salon-booking-frontend
+      dockerfile: Dockerfile
+    image: salon-frontend-v3:latest
+    container_name: salon-frontend-v3
+    restart: unless-stopped
+    ports:
+      - "3004:3000"  # Different port (V3)
+    depends_on:
+      - backend-v3
+    environment:
+      - REACT_APP_API_URL=http://localhost:5004/api
+      - REACT_APP_STRIPE_PUBLISHABLE_KEY=your_stripe_publishable_key
+    volumes:
+      - ./salon-booking-frontend:/app
+      - /app/node_modules
+    networks:
+      - salon-net-v3
+
+# Named volumes with V3 suffix
+volumes:
+  salon_mongo_v3:
+    name: salon_mongo_v3
+  salon_rabbitmq_v3:
+    name: salon_rabbitmq_v3
+
+# Network with V3 suffix
+networks:
+  salon-net-v3:
+    name: salon-net-v3
+    driver: bridge
